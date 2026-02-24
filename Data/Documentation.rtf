@@ -1,1 +1,453 @@
-
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Calibri;}}
+{\*\generator Riched20 10.0.19041}\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\f0\fs22\lang7 ALAMO\par
+StarWarsG.exe\par
+FOC.\par
+x64\par
+W\par
+GHIDRA 12\par
+\par
+\par
+FUN_1403a9e30 -> Take_Damage: The "God Function" for combat. Every attack goes through here. It calculates final damage, deducts from shields/hull, and contains the "Overkill Void" where leftover damage is discarded.\par
+param_1: Target Entity (The object that was hit).\par
+param_2: Damage Type (Index for the damage matrix).\par
+param_3: Damage Amount (Raw damage value).\par
+param_4: Attacker Entity (The ship that fired).\par
+param_5: Projectile Object.\par
+FUN_14056ba20 -> Apply_Shield_Damage: Deducts incoming damage from shield health.\par
+FUN_140549ac0 -> Apply_Hull_Damage: Deducts incoming damage from physical hull/hardpoint health.\par
+FUN_140395850 -> Get_Damage_Multiplier: The Matrix Translator. Takes Attacker/Defender, looks up Damage ID and Armor ID, calls math calculator.\par
+FUN_1402c7d80 -> Calculate_Matrix_Cell: Absolute bottom of matrix logic. Contains the 0x80 (128) hard limit. Formula: Base_Address + (Row * 128 + Column) * 4. Returns float multiplier.\par
+FUN_140215a30 -> Get_ID_From_String: Dictionary lookup. Passes string (e.g., "Armor_Venator"), returns integer ID (saved to 0x168).\par
+FUN_1401670f0 -> Physics_Update_Particles: Updates 3D movement using Kinematic Euler Integration and calculates collision bounding boxes.\par
+FUN_140166350 -> Physics_Update_Bones: Calculates spatial location of hardpoints on a moving ship (uses Fast Inverse Square Root for 3D vectors).\par
+Variables & Memory Addresses:\par
+DAT_140b15800: Base memory address where the physical Damage Matrix is stored in RAM.\par
+1408862e8 - "Damage_To_Armor_Mod": XML tag string.\par
+1408862c8 - "Damage_Types": XML tag string defining max 128 damage types.\par
+14087d1b8 - "Tactical_Health": XML tag string for base health.\par
+140a58088 - tDamageType: RTTI string proving damage types are an Enumeration.\par
+(New) Redirect & Block Strings (Targets for IDA/Ghidra):\par
+14087ec0b - "Projectile_Redirect_Chance_Modifier": Potential native projectile-level modifier.\par
+14088d860 - "Redirect_Chance": XML parser reference for base deflection chance.\par
+14088d8a7 - "Max_Projectile_Redirection_Angle_In_Degrees": XML parser reference for angle limits.\par
+1408a76af - "Damage_Redirected": Potential logic trigger post-RNG roll.\par
+1408b5d58 - "Redirect_Blaster_Ability": XML tag registering the ability.\par
+14087a56c - "PathRedirectedForMissileShield": Related to specific missile shield deflection logic.\par
+140881bc0 - "Redirect_Damage_To_Teammates": Alternative redirect logic.\par
+Objects (Memory Offsets):\par
+Target/Ship Entity (param_1):\par
++ 0x168: Armor Type ID (Integer used for matrix column lookup).\par
++ 0x2A: Parent Hull Pointer. If param_1 is a hardpoint, dereferencing this points to the main ship hull (Key for Overkill Void bypass).\par
++ 0x70: Size (112 bytes) of a single Physics/Bone/Hardpoint structure.\par
++ 0x1DC to 0x1F0: AABB Bounding Box Coordinates (Min/Max X, Y, Z).\par
+Projectile Entity (param_5 / PROJ):\par
++ 0x78 (float[3]): Spawn_Pos. Absolute X, Y, Z world coordinates where the projectile was instantiated.\par
++ 0x9C (float[3]): Impact_Pos. Absolute X, Y, Z world coordinates at the moment of collision.\par
++ 0x1E0 (float): Projectile_Dist_Travelled. Internal engine counter. Note: Unreliable due to frame-drops/time dilation. Use 0x78 and 0x9C with Pythagorean theorem instead.\par
++ 0x4BC (float): Attacking object max flight distance.\par
++ 0x4C0 (float): Projectile object max flight distance.\par
+Notes & Stability Constraints:\par
+1\par
+\par
+\par
+\par
+1. Core Combat Hook: TakeDamage\par
+Die zentrale Funktion der Engine, um Schaden auf Objekte (Schiffe, Hardpoints) anzuwenden. Hier klinken wir uns mit MinHook ein (Level A Logic).\par
+\par
+Ghidra Funktion: FUN_1403a9e30\par
+\par
+Memory Address: GetModuleHandle(NULL) + 0x3A9E30\par
+\par
+Signatur: ```cpp\par
+typedef void(__fastcall* TakeDamage_Fn)(\par
+void* target,           // Das getroffene Schiff/Objekt\par
+unsigned int dmgType,   // Art des Schadens\par
+float damage,           // Eingehender Schaden (Base)\par
+void* attacker,         // Das Projektil / Die Schadensquelle\par
+void* proj_string,      // Projektil-String/Daten\par
+void* p6, float* p7, char p8, char p9, int p10, int p11, void* p12, char p13, void* p14\par
+);\par
+\par
+Nachweis: Diese Funktion enth\'e4lt den String "GameObjectClass::Take_Damage -- Lucky shot was targeted at hull, but switched to hardpoint %s (%s)\\n".\par
+\par
+2. GameObject / Hardpoint Architektur\par
+Die Struktur, wie die Engine Schiffe und ihre zerst\'f6rbaren Sub-Systeme (Hardpoints) im Speicher verwaltet. Alles startet beim target Pointer aus der TakeDamage Funktion.\par
+\par
+A. Hardpoint Manager (Das Sub-System des Schiffes)\par
+\par
+Offset: target + 0x2D0 (In Ghidra: param_1[0x5a] -> 0x5a * 8 bytes = 0x2D0)\par
+\par
+Das ist der Pointer auf die Manager-Klasse, die alle Hardpoints dieses Schiffes verwaltet.\par
+\par
+B. Manager Daten\par
+\par
+Array Pointer: hpManager + 0x8 -> Zeigt auf das Array der Hardpoint-Instanzen.\par
+\par
+Hardpoint Count: hpManager + 0x10 -> (int) Die Anzahl der Hardpoints auf diesem Schiff.\par
+\par
+C. Hardpoint Instanz (Das individuelle Bauteil)\par
+Das Array enth\'e4lt 8-Byte Pointer f\'fcr jeden Hardpoint.\par
+\par
+Health: hpInstance + 0x28 -> (float) Die aktuelle Lebensenergie des Hardpoints (<= 0.0 bedeutet zerst\'f6rt).\par
+\par
+Definition Pointer: hpInstance + 0x20 -> Zeigt auf die zugrundeliegenden XML-Daten/Klasse des Hardpoints.\par
+\par
+D. Hardpoint Definition (Der Name)\par
+\par
+String Length: hpDef + 0xB8 -> (size_t) Die L\'e4nge des Namens (Wichtig f\'fcr SSO - Short String Optimization).\par
+\par
+String Data: hpDef + 0xA0 -> Wenn Length > 15, ist dies ein Pointer auf den char*. Wenn <= 15, liegt der String direkt hier im Puffer.\par
+\par
+3. Projectile / Attacker Architektur\par
+Die Struktur der Projektile, die genutzt wird, um Entfernungen f\'fcr entfernungsbasierten Schaden (Range-Based Damage Dropoff) zu berechnen.\par
+\par
+Type/Definition Pointer: attacker + 0x298\par
+\par
+Projektil Name (SSO String): Liegt in der Definition bei typePtr + 0x110 (L\'e4nge) und typePtr + 0xF8 (Daten/Pointer).\par
+\par
+Raw Category Value: typePtr + 0x1FE8 (z.B. Wert 7 f\'fcr Laser-Typen).\par
+\par
+Max Range (XML Value): typePtr + 0x4BC -> (float) Maximale Flugweite des Projektils.\par
+\par
+Koordinaten (Positionsdaten im Raum):\par
+\par
+Start/Aktuell XYZ: attacker + 0x78, 0x7C, 0x80\par
+\par
+Ziel/Hit XYZ: attacker + 0x9C, 0xA0, 0xA4\par
+\par
+4. Main Thread & Engine State (Neu entdeckt)\par
+Erste Einblicke in den "Herzschlag" der Engine und die Lua-Integration.\par
+\par
+Main Thread Initialization: FUN_140014fa0\par
+\par
+Main Thread ID Storage: DAT_140a155d0 -> Speichert die Windows Thread ID (GetCurrentThreadId()) des prim\'e4ren Engine-Threads. Dies erlaubt uns sp\'e4ter zu verifizieren, ob unser Code Thread-safe ausgef\'fchrt wird.\par
+\par
+Lua Error Handler: FUN_140248190 -> Behandelt Skript-Fehler und nutzt Strings wie "LuaScriptThread: Main State".\par
+\par
+Global Logger/Dispatcher: DAT_140b09d40 -> Ein globaler Pointer auf die interne Log-/Ausgabefunktion der Engine, an die formattierte Strings gesendet werden.\par
+\par
+AI Perception Initialization: FUN_1405b43d0 -> Eine riesige Map/Registrierung, die Strings wie "HardPointHealth", "Shield", "IsRetreating" an interne Engine-Checks bindet.\par
+FUN_140526590 -> Engine_Main_Service_Loop\par
+\par
+Description: The absolute "Heartbeat" of the engine. This function runs every single frame. It calculates the time passed since the last frame (Delta Time) and iterates through a massive intrusive linked list of all active game objects to call their virtual Update() or Service() methods.\par
+\par
+Global Singletons Used:\par
+\par
+DAT_140b15418: Global pointer to the GameModeManager or GameLogic singleton. Reading *(int*)(DAT_140b15418 + 0x10) yields the current engine frame/tick count.\par
+\par
+DAT_140a7bec0: Base system time offset used in conjunction with Windows timeGetTime() to calculate frame delta.\par
+\par
+Delta Time Storage: After calculating the delta time (in seconds) for the current frame, the engine writes this float value directly into the active game object at offset + 0x2C.\par
+\par
+Object Iteration (Intrusive Linked List):\par
+\par
+The function iterates through objects using lVar3 = *(longlong *)(lVar3 + 8).\par
+\par
+The actual object pointer (plVar7) is resolved by taking the node address *(longlong *)(lVar3 + 0x18) and subtracting - 0x40.\par
+\par
+Virtual Update Call: (**(code **)(*plVar7 + 8))(plVar7, 2, ...) triggers the object's native behavior.\par
+\par
+FUN_1404d5a70 -> Lua_Unit_Service_Dispatcher\par
+\par
+Description: A high-level sub-manager called by the Main Service Loop. It acts as the bridge between the C++ engine tick and the embedded Lua scripts.\par
+\par
+Mechanism: It iterates through a linked list of objects that have active scripts attached. It compares the current time against stored variables ("LastService", "LastUnitService") and the required interval ("ServiceRate", "UnitServiceRate").\par
+\par
+The Trigger: If the required time has elapsed, it pushes the string "On_Unit_Service" to the Lua stack, effectively firing the Lua event for that specific unit.\par
+\par
+Script Manager List: The list of scripted objects is found by dereferencing param_1[8] + 8.\par
+\par
+6. Lua Scripting & Thread Management\par
+The structural integration of how the game handles parallel processes and Lua state errors.\par
+\par
+FUN_140014fa0 -> Main_Thread_Initialization\par
+\par
+Description: Initializes the MainThreadClass.\par
+\par
+Thread Safety Anchor: DAT_140a155d0 stores the system's active GetCurrentThreadId(). This memory address can be checked by custom DLLs to verify if the currently executing hook is running safely inside the main engine thread or in a parallel background thread.\par
+\par
+FUN_140248190 -> Lua_Error_Dispatcher\par
+\par
+Description: The internal error and message handler for the Lua state.\par
+\par
+Key Strings: Processes strings such as "LuaScriptThread: Main State", "LuaScriptThread: %s", and "LuaScript: \\"%s\\", Error: %s".\par
+\par
+Global Logger: Pushes formatted output to DAT_140b09d40, a global function pointer acting as the engine's debug/console output dispatcher.\par
+\par
+\par
+\par
+\par
+BETA::::::::::::::::::\par
+\par
+Venator Class Mk 1 Star Destroyer\par
+State: most likely final for V1.0\par
+Speed: 1.25, Accel: 0.30, Rate of turn: 0.18\par
+Energy: 3600, Refresh: 360\par
+Shields: 37500 [75.5 refresh], 520 DeflectorShieldClass, 0.70*520 ParticleShieldClass\par
+Cost: 68.800, Upkeep: 980, Supply Coe: 0.04, Repair Coe: 0.33, Tech: 2+\par
+Requires: Tech: DBY-827 Heavy Turbolaser, DuraSteel Plating I, Energy-Dispersing Plating, Improved Atmospheric Hangar Shielding, Laws: Martial Law, Contractor: Kuat\par
+Influence: 0.04, Aggression: 0.09, Repression: 0.06\par
+HardPoints: \par
+4x Armour Plating - 460 Armour |670 health\par
+4xThrusting Engine - 375 Armour | 720 health\par
+1x HyperDrive Structure - 375 Armour | 780 health\par
+2xBridge Control - 250 Armour | 245 health\par
+1xVentral Hangar - 430 Armour | 940 health\par
+1xMain Dorsal Hangar - 520 Armour | 5650 health\par
+2xFrontal Shield Generator - 450 Armour | 430 health\par
+2xCentre Shield Generator - 460 Armour | 500 health\par
+2xSupport Rear Shield Generators - 460 Armour | 610 health\par
+2xSupply Docks - 490 Armour | 480 health\par
+1xSensor Array & CaseMate - 400 Armour | 440 health\par
+8xHeavy Twin Turbolaser - 440 Armour | 370 health | 6869 Range | 4.6s Average Reload\par
+Projectile: Twin Heavy Turbolaser, 138.5 damage, 550 Penetration, Damage Penetrating, 94 Speed,[we added per xml] Overpen Threshold: 270, [we added per DLL injection!!] Damage Profile: Max Mult for close distance: 132%  Min Damage For Max Distance: 54%\par
+2xMedium Double Turbolaser - 430 Armour |320 health |4150 Range | 1.5 Average Reload\par
+Projectile: Turbolaser, 71.5 damage, 490 Penetration, Damage Penetrating, 98 Speed, Overpen Threshold: 240, Damage Profile; Max Mult for close: 154%, Min Damage: 39%\par
+6xPoint-Defense Laser Battery - 400 Armour | 230 health | 650 Range | 0.34 Average Reload, Overpen: -\par
+Projectile: Medium Laserbolts, 9.0 damage, 80 penetration, Damage Penetrating, 86 Speed\par
+4xHeavy Proton Torpedo Tube |- 350 Armour | 210 health | 4740 Range | 119.9 Average Realod, \par
+Projectile: Heavy Proton Torpedo, 575 damage, 860 Penetration, Piercing Penetration, 31 Speed, Overpen Threshold: 360? \par
+Reflect (Bouncing, 0% Damage) Chance From Bolt:\par
+Fighters: 40%, Bombers: 10%, Corvettes: 30%, Frigates: 18%, Capital, Super: 7.5%\par
+Point-Defense: Targetablle: Medium, Light Missiles, Rockets, Light Torpedos. Range: 520, Reload per Takedown: 5.0 Seconds, Bones: 6xPoint Defense Battery\par
+Faction: Galactic Republic. \par
+Fighters: \par
+Deploy Delay Per Squadron: 9.4 Seconds.\par
+Fighter (Carrier Wings): 3 | 11 Reserve\par
+Bomber (Carrier Wings): 2 | 4 Reserve\par
+FollowUp: \par
+Mk1 (note: this one)\par
+Mk2 (note: tech 4, removes dual turbolaser, adds PD, better main battery range - tech 4)\par
+Combat Refit Mk1 (Adds some short range lasercannons - tech 3)\par
+Mk1 SPHAT (Adds a sphat laser at cost of hangar - tech 5)\par
+** see individual ship stats\par
+Description: See Design Document #1\par
+\par
+\par
+Current Damage Formulas:\par
+For the ones to use, see in GameConstants.xml\par
+(premapped into matrix):\par
+PYTHON:::::::::::::::\par
+\par
+import math\par
+\par
+# --- 1. DEINE BASIS-WERTE (Aus deiner Liste) ---\par
+base_armors = \{\par
+    # INFANTRY\par
+    "Armor_Infantry_None":       \{"Blaster": 1.15, "LaserCannon": 1.40, "Explosive": 1.65, "Melee": 1.25, "Missile": 1.45\},\par
+    "Armor_Infantry_Light":      \{"Blaster": 1.00, "LaserCannon": 1.20, "Explosive": 1.15, "Melee": 1.22, "Missile": 1.40\},\par
+    "Armor_Infantry_Medium":     \{"Blaster": 0.80, "LaserCannon": 1.10, "Explosive": 0.90, "Melee": 0.90, "Missile": 0.90\},\par
+    "Armor_Infantry_Heavy":      \{"Blaster": 0.67, "LaserCannon": 0.80, "Explosive": 0.80, "Melee": 0.85, "Missile": 0.78\},\par
+    "Armor_Infantry_Trooper_P1": \{"Blaster": 0.62, "LaserCannon": 0.70, "Explosive": 0.61, "Melee": 0.75, "Missile": 0.70\},\par
+    "Armor_Infantry_Trooper_P2": \{"Blaster": 0.68, "LaserCannon": 0.75, "Explosive": 0.57, "Melee": 0.74, "Missile": 0.70\},\par
+\par
+    # DROID\par
+    "Armor_Droid_None":          \{"Blaster": 1.10, "LaserCannon": 1.50, "Explosive": 1.10, "Melee": 1.00, "Missile": 1.70\},\par
+    "Armor_Droid_Light":         \{"Blaster": 0.95, "LaserCannon": 1.10, "Explosive": 1.00, "Melee": 0.80, "Missile": 1.25\},\par
+    "Armor_Droid_Medium":        \{"Blaster": 0.70, "LaserCannon": 0.95, "Explosive": 0.85, "Melee": 0.70, "Missile": 1.00\},\par
+    "Armor_Droid_Heavy":         \{"Blaster": 0.525,"LaserCannon": 0.825,"Explosive": 0.625,"Melee": 0.50, "Missile": 0.65\},\par
+    "Armor_Droid_Superheavy":    \{"Blaster": 0.40, "LaserCannon": 0.65, "Explosive": 0.50, "Melee": 0.40, "Missile": 0.60\},\par
+\par
+    # VEHICLE (Level 1 Basis)\par
+    "Armor_Vehicle_L1":          \{"Blaster": 0.80, "LaserCannon": 0.98, "Explosive": 0.97, "Melee": 0.75, "Missile": 0.97\},\par
+\}\par
+\par
+# --- 2. FAHRZEUG-SKALIERUNG (L2 bis L10) ---\par
+# Regel: Vorheriger Wert * 0.90\par
+vehicle_mult = 0.90\par
+current_veh_stats = base_armors["Armor_Vehicle_L1"].copy()\par
+\par
+for lvl in range(2, 11):\par
+    new_stats = \{\}\par
+    for dtype, val in current_veh_stats.items():\par
+        new_stats[dtype] = val * vehicle_mult\par
+    \par
+    base_armors[f"Armor_Vehicle_L\{lvl\}"] = new_stats\par
+    current_veh_stats = new_stats\par
+\par
+# --- 3. WAFFEN-DEFINITIONEN ---\par
+# (Prefix, Kategorie, MaxLevel, SpecialMult)\par
+weapons = [\par
+    ("Damage_Blaster_Lvl_",   "Blaster",     6,  1.039),\par
+    ("Damage_Laser_Lvl_",     "LaserCannon", 10, 1.090),\par
+    ("Damage_Explosion_Lvl_", "Explosive",   5,  1.130),\par
+    ("Damage_Missile_Lvl_",   "Missile",     3,  1.150),\par
+    ("Damage_Melee_Lvl_",     "Melee",       5,  1.310),\par
+]\par
+\par
+# --- 4. OUTPUT GENERATOR ---\par
+print("")\par
+\par
+for armor_name, armor_data in base_armors.items():\par
+    # Kleiner Kommentar zur \'dcbersicht (optional, XML ignoriert das)\par
+    print(f"\\n\\t")\par
+\par
+    for w_prefix, w_cat, max_lvl, spec_mult in weapons:\par
+        for lvl in range(1, max_lvl + 1):\par
+            \par
+            # Basis-Wert der R\'fcstung holen\par
+            base_val = armor_data.get(w_cat, 1.0)\par
+            \par
+            # DEINE FORMEL:\par
+            # (damage_reduction + (0.01 * level)) * special_mult^(level)\par
+            \par
+            term_a = base_val + (0.010 * lvl)\par
+            term_b = math.pow(spec_mult, lvl)\par
+            \par
+            final_val = term_a * term_b\par
+            \par
+            # Runden auf 4 Stellen\par
+            final_val = round(final_val, 4)\par
+            \par
+            # Waffennamen bauen\par
+            full_w_name = f"\{w_prefix\}\{lvl\}"\par
+            \par
+            # Output exakt im gew\'fcnschten Format\par
+            print(f"\\t<Damage_To_Armor_Mod> \{full_w_name\}, \{armor_name\}, \{final_val\} </Damage_To_Armor_Mod>")\par
+\par
+:::: PYTHON END ::::\par
+PYTHON :::::\par
+import math\par
+\par
+# --- KONFIGURATION ---\par
+OUTPUT_FILE = "damage_matrix_unified_v7.xml"\par
+\par
+def get_shield_mm(class_num):\par
+    """Berechnet den Basis-Schildwert (SD) f\'fcr die Klasse (40mm Schritte)"""\par
+    return class_num * 40\par
+\par
+def format_id(prefix, value):\par
+    """Formatiert Namen: A_0450, DP_0505, S_10_5_PH"""\par
+    if prefix == "S":\par
+        if isinstance(value, float):\par
+            whole = int(value)\par
+            return f"S_\{whole:02d\}_5"\par
+        return f"S_\{value:02d\}"\par
+    return f"\{prefix\}_\{int(value):04d\}"\par
+\par
+# --- PHYSIK-FORMELN (v5.2 LOGIK) ---\par
+\par
+def calc_armor_dmg(pen, armor):\par
+    """Durchschlag gegen H\'fclle (A_xxxx)"""\par
+    r = pen / armor\par
+    if pen > armor:\par
+        # dm = 1.0750 * (Ratio)^1.06\par
+        dm = 1.0750 * math.pow(r, 1.02)\par
+    else:\par
+        # dm = 0.8400 * (Ratio)^1.30\par
+        dm = 0.8400 * math.pow(r, 1.30)\par
+    return round(max(0.01, min(dm, 5.0)), 4)\par
+\par
+def calc_shield_dp_dmg(pen, sd):\par
+    """Kanonen (DP) gegen Deflektor (SD)"""\par
+    r = pen / sd\par
+    if sd > pen:\par
+        # dm = Ratio^0.275\par
+        dm = math.pow(r, 0.18)\par
+    else:\par
+        # dm = x*Ratio^0.35\par
+        dm = 1.05 * math.pow(r, 0.35)\par
+    return round(max(0.15, min(dm, 10.0)), 4)\par
+\par
+def calc_shield_pp_dmg(pen, sp, is_thermal):\par
+    """Torpedos (PP) gegen Partikelst\'e4rke (SP) mit Bypass"""\par
+    # Bypass-Check: Wenn Pen > 170% der Partikelst\'e4rke UND nicht Thermal\par
+    if pen > (1.70 * sp) and not is_thermal:\par
+        return 0.000\par
+    \par
+    # Treffer im Schild (PP/SP)^0.45\par
+    dm = 0.7500 * math.pow(pen / sp, 0.35)\par
+    return round(max(0.15, min(dm, 10.0)), 4)\par
+\par
+# --- GENERIERUNG ---\par
+\par
+def main():\par
+    # --- 1. WAFFEN LISTEN (DAMAGE TYPES) ---\par
+    # DP (Direkte Penetration / Kanonen)\par
+    dp_list = list(range(40, 400, 20))           # Low: 40-380 (18)\par
+    dp_list += list(range(400, 605, 5))          # Capital: 400-600 (41)\par
+    dp_list += [610, 640, 670, 700, 730, 760, 790] # Mid-High (7)\par
+    dp_list += [800, 850, 900, 950, 1000]        # High (5)\par
+    \par
+    # PP (Piercing Penetration / Torpedos)\par
+    pp_list = list(range(100, 840, 40))          # 100-820 (19)\par
+    pp_list += [860, 900, 940, 980, 1000]        # High (5)\par
+\par
+    # --- 2. PANZERUNG LISTEN (ARMOR TYPES) ---\par
+    # A_xxxx (H\'fclle)\par
+    a_list = list(range(25, 400, 25))            # Low: 25-375 (15)\par
+    a_list += list(range(400, 560, 10))          # Capital Focus: 400-550 (16)\par
+    a_list += [575, 600, 625, 650, 675, 700, 725, 750, 775, 800] # Mid (10)\par
+    a_list += [850, 900, 950, 1000]              # High (4)\par
+\par
+    # Schilde definieren\par
+    base_shield_classes = list(range(1, 26))\par
+    inter_shields = [0.5, 1.5, 9.5, 10.5, 11.5, 12.5, 13.5]\par
+    all_shields = sorted(base_shield_classes + inter_shields)\par
+\par
+    xml_output = []\par
+\par
+    # --- BLOCK 1: H\'dcLLE ---\par
+    xml_output.append("\\n\\t")\par
+    for a_val in a_list:\par
+        a_id = format_id('A', a_val)\par
+        for dp in dp_list:\par
+            dm = calc_armor_dmg(dp, a_val)\par
+            xml_output.append(f'\\t<Damage_To_Armor_Mod> \{format_id("DP", dp)\}, \{a_id\}, \{dm\} </Damage_To_Armor_Mod>')\par
+        for pp in pp_list:\par
+            dm = calc_armor_dmg(pp, a_val)\par
+            xml_output.append(f'\\t<Damage_To_Armor_Mod> \{format_id("PP", pp)\}, \{a_id\}, \{dm\} </Damage_To_Armor_Mod>')\par
+\par
+    # --- BLOCK 2: SCHILDE ---\par
+    xml_output.append("\\n\\t")\par
+    for c in all_shields:\par
+        sd = get_shield_mm(c)\par
+        \par
+        # Varianten festlegen\par
+        variants = []\par
+        \par
+        # PW (Weak) - Jetzt generell 72% nach deiner Logik\par
+        variants.append((f"\{format_id('S', c)\}_PW", sd * 0.7000, False))\par
+        \par
+        # PH (High) - Nur wenn sd >= 250 oder Zwischenklasse\par
+        if sd >= 250 or isinstance(c, float):\par
+            variants.append((f"\{format_id('S', c)\}_PH", sd * 0.9250, False))\par
+\par
+        # Thermal Checks (S_13_5 und S_24)\par
+        current_base = format_id('S', c)\par
+        if current_base == "S_13_5":\par
+            variants.append(("S_13_5_PH_T", sd * 0.9750, True))\par
+        elif current_base == "S_24":\par
+            variants.append(("S_24_PH_T", sd * 0.9750, True))\par
+\par
+        for s_tag, sp_val, is_thermal in variants:\par
+            # DP vs Schild\par
+            for dp in dp_list:\par
+                dm = calc_shield_dp_dmg(dp, sd)\par
+                xml_output.append(f'\\t<Damage_To_Armor_Mod> \{format_id("DP", dp)\}, \{s_tag\}, \{dm\} </Damage_To_Armor_Mod>')\par
+            \par
+            # PP vs Schild (Bypass Check)\par
+            for pp in pp_list:\par
+                dm = calc_shield_pp_dmg(pp, sp_val, is_thermal)\par
+                xml_output.append(f'\\t<Damage_To_Armor_Mod> \{format_id("PP", pp)\}, \{s_tag\}, \{dm\} </Damage_To_Armor_Mod>')\par
+\par
+    # --- DATEI SCHREIBEN ---\par
+    with open(OUTPUT_FILE, "w") as f:\par
+        f.write("<Damage_Matrix>\\n")\par
+        f.write("\\n".join(xml_output))\par
+        f.write("\\n</Damage_Matrix>")\par
+\par
+    print(f"Fertig! \{len(xml_output)\} Eintr\'e4ge generiert.")\par
+    print(f"Datei: \{OUTPUT_FILE\}")\par
+\par
+if __name__ == "__main__":\par
+    main()\par
+:::::::::PYTHON END :::::::::\par
+\par
+\par
+\par
+\par
+\par
+}
+ 

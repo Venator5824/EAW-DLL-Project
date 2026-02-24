@@ -1,0 +1,39 @@
+<xml version="1.0" encoding="utf-8">
+	<DLLData>
+		<!-- only with SWG_VINJ.dll [for 0.10 alpha]-->
+		<!-- dont restribute without my permission -->
+		<ProjectilesData>
+			<Items>
+				<!-- A or a - spelling matters! use 1:1 same ASCII as in the projecitles.xml or whatever you defined-->
+				<Item key="PROJ_SHIP_TWIN_TURBOLASER_BLUE_VENATOR">
+					<!-- never below this value-->
+					<fMinDamageMultAbsolute value="1.0000"/>
+					<!-- fmult1* r*r + fmult2 * r + fmult3 for range based multiplying damage-->
+					<fMult1 value="0.0000"/>
+					<fMult2 value="0.0000"/>
+					<fMult3 value="0.0000"/>
+				</Item>
+				<!-- just add new items below -->
+				<!-- non-exsitend projectiles will just be ignored-->
+			</Items>
+		</ProjectilesData>
+		<LoggingData>
+			<uDebugLevel value="2"/> <!-- 0 is none, 1 is general and error, 2 is all-->
+			<sLoggingFile value="LogDLLInject.log"/>
+		</LoggingData>
+		<Enable value="true"/>	
+	</DLLData>
+</xml>
+
+
+
+<!--
+STAR WARS(TM): Empire at War, 
+STAR WARS(TM): Empire at War - Forces of Corruption
+by LucasFilm Ltd.
+by Petroglyph Games, Inc.
+
+
+
+VENATORMODS
+-->
