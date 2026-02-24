@@ -1,26 +1,57 @@
 <xml version="1.0" encoding="utf-8">
 	<DLLData>
-		<!-- only with SWG_VINJ.dll [for 0.10 alpha]-->
-		<!-- dont restribute without my permission -->
 		<ProjectilesData>
 			<Items>
-				<!-- A or a - spelling matters! use 1:1 same ASCII as in the projecitles.xml or whatever you defined-->
+				<!-- section *1-->
 				<Item key="PROJ_SHIP_TWIN_TURBOLASER_BLUE_VENATOR">
-					<!-- never below this value-->
-					<fMinDamageMultAbsolute value="1.0000"/>
-					<!-- fmult1* r*r + fmult2 * r + fmult3 for range based multiplying damage-->
-					<fMult1 value="0.0000"/>
-					<fMult2 value="0.0000"/>
-					<fMult3 value="0.0000"/>
+					<fMinDamageMultAbsolute value="0.4069"/>
+					<!-- Formula is: 
+						- MULT_RANGE is multiplier for damage by range, [float]
+						- current_dist is current travveled distance for the projectile when hitting, what is (start x,y,z)->(hit x,y,z) [float]
+						- max_dist is the maximum distance the projectile is allowed to fly and exist (set in the XML usually) [float]
+						- R is ratio from 1.0 - current_dist/max_dist. [float]
+					MULT_RANGE = Mult1 * R * R + Mult2 * R + Mult 3; Limit lower: MinDamageMultAbsolute. Limit upper: None [float]
+						-> And then, the MULT RANGE is multiplied with base damage, and then the game does internal multiplication with damage to armor matrix (XML) and possible other modifiers [float]
+					-->
+					<fMult1 value="-0.7069"/>
+					<fMult2 value="1.4669"/>
+					<fMult3 value="0.5569"/>
 				</Item>
-				<!-- just add new items below -->
+				<Item key="PROJ_SHIP_TWIN_TURBOLASER_BLUE_IMPERATOR">
+					<!-- never below this value for range multiplier-->
+					<fMinDamageMultAbsolute value="0.4500"/>
+					<fMult1 value="0.0600"/>
+					<fMult2 value="1.2500"/>
+					<fMult3 value="0.4500"/>
+				</Item>
+				<!-- just add new items below-->
 				<!-- non-exsitend projectiles will just be ignored-->
+				<!-- non listed laser will not do range based damage-->
 			</Items>
+			<Enabled value="true"/>
 		</ProjectilesData>
+		<HardpointData>
+			<Items>
+				<!-- for testing first -->
+				<Item unit="Republic_Venator_Class_Star_Destroyer" key="HP_Republic_Venator_Main_Hangar">
+					<Abilities />
+					<Events>
+						<Item name="Reduce_Accuracy">
+							<Change key="accuracy" value="0.50"/>
+						</Item>
+					</Events>
+					<lua_Script value="NULL"/>
+				</Item>
+			</Items>
+			<bEnabled value="true"/>
+			<!-- how often to recheck all hardpoints listed for status -->
+			<uUpdateRateMS value="2500"/>
+		</HardpointData>
 		<LoggingData>
-			<uDebugLevel value="2"/> <!-- 0 is none, 1 is general and error, 2 is all-->
-			<sLoggingFile value="LogDLLInject.log"/>
+			<uDebugLevel value="2"/> <!-- 0 is none, 1 is startup, shutdown and error, 2 is all data-->
+			<sLoggingFile value="VDLLInject.log"/>
 		</LoggingData>
+		<AllowLUAapi value="true"/>
 		<Enable value="true"/>	
 	</DLLData>
 </xml>
@@ -34,6 +65,25 @@ by LucasFilm Ltd.
 by Petroglyph Games, Inc.
 
 
-
+SWG_VINJ by
 VENATORMODS
+VERSION 0.1 - alpha
+[requires SWG_VINJ.asi, dinput8.dll or similar]
 -->
+
+
+
+<!-- dont reupload without my permission -->
+
+
+<!-- *0-->
+<!-- No check is used to find matches for capital or minor letters, a is not the same as A. It must match. for DAM_01 is not the same as Dam_01 or dam_01 or dam_1-->
+
+
+<!-- *1 -->
+<!-- this section allows for range-based damage dropoff or increase-->
+<!-- each projectile got an ingame - range (maximum), set in projectiles.xml or similar -->
+<!-- and an current distance it traveled before hitting and applying damage -->
+<!-- this xml settings allow for tung damage based on range, be it constant damage falloff, explosive damage very close, damage increase over range, or rapid damage decline -->
+<!-- for default, this script also applies to all non-listed projectiles, with default values of mult1 = 0, mult2 = 0.85, mult 3 = 0.10. But only for all projectiles with type LASER-->
+<!-- if you wanna add torpedos, ... to the ranged based modification, add them to the list. -->
